@@ -58,8 +58,8 @@ $ curl http://localhost:4011/health
 $ cd /var/www/html/matchnow-backend 
 $ git pull origin main 
 $ sudo pnpm install 
-$ cp .env.production .env 
-$ sudo pnpm run build 
+$ sudo cp .env.production .env
+$ sudo pnpm run build
 $ sudo pnpm run start:prod  # 배포 전 검증
 $ curl http://localhost:4011/health
 $ sudo pm2 stop matchnow-api 2>/dev/null || true  # 기존 PM2 프로세스 중지

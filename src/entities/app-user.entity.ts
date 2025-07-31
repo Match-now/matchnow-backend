@@ -1,4 +1,4 @@
-// src/entities/app-user.entity.ts
+// src/entities/app-user.entity.ts (개선된 버전)
 import {
   Entity,
   PrimaryGeneratedColumn,
@@ -6,7 +6,7 @@ import {
   CreateDateColumn,
   UpdateDateColumn,
   DeleteDateColumn,
-  OneToMany,
+  Index,
 } from 'typeorm';
 import { ApiProperty } from '@nestjs/swagger';
 
@@ -30,6 +30,9 @@ export enum Gender {
 }
 
 @Entity('app_users')
+@Index(['socialId', 'provider'], { unique: true }) // 복합 인덱스
+@Index(['nickname'], { unique: true }) // 닉네임 유니크 인덱스
+@Index(['email']) // 이메일 인덱스
 export class AppUser {
   @PrimaryGeneratedColumn()
   @ApiProperty({ example: 1, description: '사용자 ID' })
@@ -58,8 +61,8 @@ export class AppUser {
   @ApiProperty({ example: '홍길동', description: '사용자 이름' })
   name: string;
 
-  @Column({ length: 100, nullable: true })
-  @ApiProperty({ example: '길동이', description: '닉네임' })
+  @Column({ length: 20, unique: true, nullable: true })
+  @ApiProperty({ example: '길동이', description: '닉네임 (고유값)' })
   nickname?: string;
 
   @Column({ type: 'text', nullable: true })
@@ -113,6 +116,31 @@ export class AppUser {
   @Column({ type: 'datetime', nullable: true })
   @ApiProperty({ example: new Date(), description: '토큰 만료 시간' })
   tokenExpiresAt?: Date;
+
+  // 🆕 추가 필드들
+  @Column({ type: 'varchar', length: 10, nullable: true })
+  @ApiProperty({ example: 'ko', description: '선호 언어' })
+  preferredLanguage?: string;
+
+  @Column({ type: 'varchar', length: 50, nullable: true })
+  @ApiProperty({ example: 'Asia/Seoul', description: '시간대' })
+  timezone?: string;
+
+  @Column({ type: 'boolean', default: true })
+  @ApiProperty({ example: true, description: '마케팅 수신 동의' })
+  marketingConsent?: boolean;
+
+  @Column({ type: 'boolean', default: true })
+  @ApiProperty({ example: true, description: '푸시 알림 허용' })
+  pushNotificationEnabled?: boolean;
+
+  @Column({ type: 'json', nullable: true })
+  @ApiProperty({ example: {}, description: '사용자 설정 (JSON)' })
+  settings?: Record<string, any>;
+
+  @Column({ type: 'text', nullable: true })
+  @ApiProperty({ example: '관리자 메모', description: '관리자 메모' })
+  adminNote?: string;
 
   @CreateDateColumn()
   @ApiProperty({ example: new Date(), description: '생성일시' })

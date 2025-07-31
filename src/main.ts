@@ -182,14 +182,107 @@ async function bootstrap() {
   // }
   // 수정된 코드 (항상 활성화 또는 조건부 활성화)
   // 항상 활성화
+  // const swaggerConfig = new DocumentBuilder()
+  //   .setTitle('Match Now API')
+  //   .setDescription('Match Now API 문서')
+  //   .setVersion('1.0')
+  //   .addBearerAuth()
+  //   .build();
+  // const swaggerDocument = SwaggerModule.createDocument(app, swaggerConfig);
+  // SwaggerModule.setup('api', app, swaggerDocument);
+  // Swagger 설정 (개선된 버전)
   const swaggerConfig = new DocumentBuilder()
     .setTitle('Match Now API')
-    .setDescription('Match Now API 문서')
-    .setVersion('1.0')
-    .addBearerAuth()
+    .setDescription(`
+# Match Now API 문서
+
+매칭 서비스를 위한 백엔드 API입니다.
+
+## 🔐 인증 시스템
+
+### 관리자 인증
+- **JWT 토큰 기반 인증**
+- 기본 계정: admin@matchnow.com / admin123!@#
+
+### 앱 사용자 인증
+- **SNS 소셜 로그인**: 카카오, 구글, 애플
+- **JWT 토큰**: 7일 만료
+- **자동 회원가입**: 첫 로그인 시 자동 계정 생성
+
+## 🚀 주요 기능
+
+### 📱 앱 사용자
+- SNS 소셜 로그인/회원가입
+- 닉네임 중복 검증
+- 프로필 관리
+- 로그아웃
+
+### 👨‍💼 관리자
+- 관리자 로그인/회원가입
+- 경기 데이터 관리
+- 사용자 통계 조회
+
+### ⚽ 축구 데이터
+- BetsAPI 연동
+- 실시간 경기 정보
+- 리그/팀/선수 관리
+
+## 🌍 환경별 엔드포인트
+
+- **개발**: http://localhost:4011
+- **운영**: http://175.126.95.157:4011
+    `)
+    .setVersion('1.0.0')
+    .addBearerAuth(
+      {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT',
+        name: 'JWT',
+        description: 'JWT 토큰을 입력하세요',
+        in: 'header',
+      },
+      'JWT-auth', // This name here is important for matching up with @ApiBearerAuth() in your controller!
+    )
+    .addTag('Admin Authentication', '관리자 인증 관련 API')
+    .addTag('App User Authentication', '앱 사용자 SNS 로그인 관련 API')
+    .addTag('SNS Login Test (개발용)', '개발/테스트용 SNS 로그인 시뮬레이션')
+    .addTag('Football Matches Management', '축구 경기 데이터 관리')
+    .addTag('BetsAPI - Football Data', 'BetsAPI 축구 데이터 조회')
+    .addTag('Enhanced BetsAPI - Complete Football Data Management', '완전한 축구 데이터 관리')
+    .addTag('Countries', '국가 관리')
+    .addTag('Sports Categories', '스포츠 카테고리 관리')
+    .addTag('Leagues', '리그 관리')
+    .addTag('Teams', '팀 관리')
+    .addTag('Players', '선수 관리')
+    .addServer('http://localhost:4011', '개발 서버')
+    .addServer('http://175.126.95.157:4011', '운영 서버')
     .build();
+
   const swaggerDocument = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup('api', app, swaggerDocument);
+  
+  // Swagger 커스텀 옵션
+  const swaggerOptions = {
+    swaggerOptions: {
+      persistAuthorization: true, // 토큰 정보 유지
+      tagsSorter: 'alpha', // 태그 알파벳 순 정렬
+      operationsSorter: 'alpha', // 메서드 알파벳 순 정렬
+      docExpansion: 'none', // 기본적으로 접어두기
+      filter: true, // 검색 필터 활성화
+      showRequestHeaders: true, // 요청 헤더 표시
+      tryItOutEnabled: true, // Try it out 기본 활성화
+    },
+    customSiteTitle: 'Match Now API Documentation',
+    customfavIcon: '/favicon.ico',
+    customJs: [
+      'https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/4.15.5/swagger-ui-bundle.js',
+    ],
+    customCssUrl: [
+      'https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/4.15.5/swagger-ui.css',
+    ],
+  };
+
+  SwaggerModule.setup('api', app, swaggerDocument, swaggerOptions); 
 
   
   // 루트 경로 정보
