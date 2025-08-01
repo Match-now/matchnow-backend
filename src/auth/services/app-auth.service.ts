@@ -1,8 +1,13 @@
-// src/auth/services/app-auth.service.ts (TypeORM 타입 에러 수정 버전)
+// ============================================
+// 🔧 수정된 AppAuth Service (src/auth/services/app-auth.service.ts)
+// 타입 에러 해결 버전
+// ============================================
+
 import { Injectable, UnauthorizedException, BadRequestException, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
 
 import { AppUser, SocialProvider, AppUserStatus, Gender } from '../../entities/app-user.entity';
 
@@ -23,7 +28,17 @@ export interface SocialLoginDto {
 export interface AppLoginResponse {
   user: AppUser;
   accessToken: string;
+  refreshToken: string; // 🆕 refreshToken도 응답에 포함
   isNewUser: boolean;
+}
+
+export interface RefreshTokenDto {
+  refreshToken: string;
+}
+
+export interface RefreshTokenResponse {
+  accessToken: string;
+  refreshToken: string; // 🆕 새로운 refreshToken
 }
 
 @Injectable()
@@ -32,6 +47,7 @@ export class AppAuthService {
     @InjectRepository(AppUser)
     private appUserRepository: Repository<AppUser>,
     private jwtService: JwtService,
+    private configService: ConfigService,
   ) {}
 
   async socialLogin(socialLoginDto: SocialLoginDto, clientIp?: string): Promise<AppLoginResponse> {
@@ -45,7 +61,6 @@ export class AppAuthService {
       birthDate,
       gender,
       phoneNumber,
-      refreshToken,
     } = socialLoginDto;
 
     // 고유 식별자 생성 (provider + socialId)
@@ -73,14 +88,12 @@ export class AppAuthService {
         provider,
         email,
         name,
-        nickname: nickname || name, // 닉네임이 없으면 이름 사용
+        nickname: nickname || name,
         profileImageUrl,
         birthDate: birthDate ? new Date(birthDate) : undefined,
         gender,
         phoneNumber,
         status: AppUserStatus.ACTIVE,
-        refreshToken,
-        tokenExpiresAt: refreshToken ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) : undefined, // 30일
       });
 
       user = await this.appUserRepository.save(user);
@@ -90,7 +103,6 @@ export class AppAuthService {
       await this.appUserRepository.update(user.id, {
         email: email || user.email,
         name: name || user.name,
-        // 닉네임은 사용자가 명시적으로 변경하지 않는 한 유지
         nickname: user.nickname || nickname || name,
         profileImageUrl: profileImageUrl || user.profileImageUrl,
         birthDate: birthDate ? new Date(birthDate) : user.birthDate,
@@ -98,8 +110,6 @@ export class AppAuthService {
         phoneNumber: phoneNumber || user.phoneNumber,
         lastLoginAt: new Date(),
         lastLoginIp: clientIp,
-        refreshToken: refreshToken || user.refreshToken,
-        tokenExpiresAt: refreshToken ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) : user.tokenExpiresAt,
       });
 
       // 업데이트된 사용자 정보 다시 조회
@@ -117,14 +127,145 @@ export class AppAuthService {
       throw new UnauthorizedException('비활성화된 계정입니다.');
     }
 
-    // JWT 토큰 생성
-    const accessToken = this.generateAccessToken(user);
+    // 🆕 Access Token과 Refresh Token 모두 생성
+    const { accessToken, refreshToken } = await this.generateTokenPair(user);
+
+    // 🆕 Refresh Token을 DB에 저장
+    await this.saveRefreshToken(user.id, refreshToken);
 
     return {
       user,
       accessToken,
+      refreshToken,
       isNewUser,
     };
+  }
+
+  // 🆕 토큰 갱신 메서드
+  async refreshTokens(refreshTokenDto: RefreshTokenDto, clientIp?: string): Promise<RefreshTokenResponse> {
+    const { refreshToken } = refreshTokenDto;
+
+    try {
+      // 1. Refresh Token 검증
+      const payload = this.jwtService.verify(refreshToken, {
+        secret: this.configService.get<string>('JWT_SECRET'),
+      });
+
+      // 2. Refresh Token 타입 확인
+      if (payload.tokenType !== 'refresh') {
+        throw new UnauthorizedException('Invalid token type');
+      }
+
+      // 3. 사용자 조회 및 저장된 Refresh Token과 비교
+      const user = await this.appUserRepository.findOne({
+        where: { id: payload.sub },
+      });
+
+      if (!user) {
+        throw new UnauthorizedException('사용자를 찾을 수 없습니다.');
+      }
+
+      if (user.status !== AppUserStatus.ACTIVE) {
+        throw new UnauthorizedException('비활성화된 계정입니다.');
+      }
+
+      // 4. 저장된 Refresh Token과 일치하는지 확인
+      if (user.refreshToken !== refreshToken) {
+        throw new UnauthorizedException('Invalid refresh token');
+      }
+
+      // 5. Refresh Token 만료 시간 확인
+      if (user.refreshTokenExpiresAt && user.refreshTokenExpiresAt < new Date()) {
+        throw new UnauthorizedException('Refresh token expired');
+      }
+
+      // 6. 새로운 토큰 쌍 생성
+      const newTokens = await this.generateTokenPair(user);
+
+      // 7. 새로운 Refresh Token을 DB에 저장
+      await this.saveRefreshToken(user.id, newTokens.refreshToken);
+
+      // 8. 마지막 로그인 정보 업데이트
+      await this.appUserRepository.update(user.id, {
+        lastLoginAt: new Date(),
+        lastLoginIp: clientIp,
+      });
+
+      return {
+        accessToken: newTokens.accessToken,
+        refreshToken: newTokens.refreshToken,
+      };
+    } catch (error) {
+      throw new UnauthorizedException('Invalid or expired refresh token');
+    }
+  }
+
+  // 🆕 토큰 쌍 생성 메서드
+  private async generateTokenPair(user: AppUser): Promise<{ accessToken: string; refreshToken: string }> {
+    const payload = {
+      sub: user.id,
+      email: user.email,
+      type: 'app' as const,
+      provider: user.provider,
+      nickname: user.nickname,
+    };
+
+    // Access Token (짧은 만료 시간)
+    const accessToken = this.jwtService.sign({
+      ...payload,
+      tokenType: 'access',
+    }, {
+      expiresIn: this.configService.get<string>('JWT_ACCESS_EXPIRES_IN', '15m'), // 🔧 환경변수 사용
+    });
+
+    // Refresh Token (긴 만료 시간)
+    const refreshToken = this.jwtService.sign({
+      ...payload,
+      tokenType: 'refresh',
+    }, {
+      expiresIn: this.configService.get<string>('JWT_REFRESH_EXPIRES_IN', '7d'), // 🔧 환경변수 사용
+    });
+
+    return { accessToken, refreshToken };
+  }
+
+  // 🆕 Refresh Token DB 저장 메서드
+  private async saveRefreshToken(userId: number, refreshToken: string): Promise<void> {
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 7); // 7일 후 만료
+
+    await this.appUserRepository.update(userId, {
+      refreshToken,
+      refreshTokenExpiresAt: expiresAt,
+      refreshTokenIssuedAt: new Date(),
+    });
+  }
+
+  // 🔧 수정: Refresh Token 무효화 (로그아웃 시) - 타입 에러 해결
+  async revokeRefreshToken(userId: number): Promise<void> {
+    // 방법 1: undefined 사용 (추천)
+    await this.appUserRepository.update(userId, {
+      refreshToken: undefined,
+      refreshTokenExpiresAt: undefined,
+      refreshTokenIssuedAt: undefined,
+    });
+
+    // 방법 2: 또는 직접 쿼리 사용
+    // await this.appUserRepository
+    //   .createQueryBuilder()
+    //   .update(AppUser)
+    //   .set({
+    //     refreshToken: () => 'NULL',
+    //     refreshTokenExpiresAt: () => 'NULL',
+    //     refreshTokenIssuedAt: () => 'NULL',
+    //   })
+    //   .where('id = :id', { id: userId })
+    //   .execute();
+  }
+
+  // 🆕 모든 Refresh Token 무효화 (보안상 필요 시)
+  async revokeAllRefreshTokens(userId: number): Promise<void> {
+    await this.revokeRefreshToken(userId);
   }
 
   // 🆕 닉네임 중복 검증
@@ -133,24 +274,20 @@ export class AppAuthService {
       return false;
     }
 
-    // 닉네임 길이 검증
     if (nickname.length < 2 || nickname.length > 20) {
       return false;
     }
 
-    // 특수문자 검증 (한글, 영문, 숫자, 일부 특수문자만 허용)
     const nicknameRegex = /^[가-힣a-zA-Z0-9_.-]+$/;
     if (!nicknameRegex.test(nickname)) {
       return false;
     }
 
-    // 금지어 검증 (필요시 추가)
     const forbiddenWords = ['admin', '관리자', 'null', 'undefined', 'test'];
     if (forbiddenWords.some(word => nickname.toLowerCase().includes(word.toLowerCase()))) {
       return false;
     }
 
-    // 데이터베이스에서 중복 확인
     const existingUser = await this.appUserRepository.findOne({
       where: { nickname },
     });
@@ -160,10 +297,7 @@ export class AppAuthService {
 
   // 🔧 수정: 로그아웃 (토큰 무효화) - 타입 에러 해결
   async logout(userId: number): Promise<void> {
-    await this.appUserRepository.update(userId, {
-      refreshToken: undefined, // null 대신 undefined 사용
-      tokenExpiresAt: undefined, // null 대신 undefined 사용
-    });
+    await this.revokeRefreshToken(userId);
   }
 
   async validateUser(id: number): Promise<AppUser | null> {
@@ -181,7 +315,6 @@ export class AppAuthService {
       throw new BadRequestException('사용자를 찾을 수 없습니다.');
     }
 
-    // 닉네임 변경 시 중복 검증
     if (updateData.nickname && updateData.nickname !== user.nickname) {
       const isNicknameAvailable = await this.checkNicknameAvailability(updateData.nickname);
       if (!isNicknameAvailable) {
@@ -189,7 +322,6 @@ export class AppAuthService {
       }
     }
 
-    // 업데이트 가능한 필드만 허용
     const allowedFields = [
       'name',
       'nickname',
@@ -221,27 +353,32 @@ export class AppAuthService {
 
   // 🔧 수정: 계정 비활성화 - 타입 에러 해결
   async deactivateUser(userId: number): Promise<void> {
+    // 방법 1: undefined 사용 (추천)
     await this.appUserRepository.update(userId, {
       status: AppUserStatus.INACTIVE,
-      refreshToken: undefined, // null 대신 undefined 사용
-      tokenExpiresAt: undefined, // null 대신 undefined 사용
+      refreshToken: undefined,
+      refreshTokenExpiresAt: undefined,
+      refreshTokenIssuedAt: undefined,
     });
+
+    // 방법 2: 또는 직접 쿼리 사용
+    // await this.appUserRepository
+    //   .createQueryBuilder()
+    //   .update(AppUser)
+    //   .set({
+    //     status: AppUserStatus.INACTIVE,
+    //     refreshToken: () => 'NULL',
+    //     refreshTokenExpiresAt: () => 'NULL',
+    //     refreshTokenIssuedAt: () => 'NULL',
+    //   })
+    //   .where('id = :id', { id: userId })
+    //   .execute();
   }
 
   async deleteUser(userId: number): Promise<void> {
+    // Soft delete 전에 토큰도 무효화
+    await this.revokeRefreshToken(userId);
     await this.appUserRepository.softDelete(userId);
-  }
-
-  private generateAccessToken(user: AppUser): string {
-    const payload = {
-      sub: user.id,
-      email: user.email,
-      type: 'app' as const,
-      provider: user.provider,
-      nickname: user.nickname,
-    };
-
-    return this.jwtService.sign(payload);
   }
 
   // 사용자 통계 조회

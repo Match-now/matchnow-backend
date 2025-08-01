@@ -1,4 +1,7 @@
-// src/entities/app-user.entity.ts (개선된 버전)
+// ============================================
+// 1. AppUser Entity 수정 (src/entities/app-user.entity.ts)
+// ============================================
+
 import {
   Entity,
   PrimaryGeneratedColumn,
@@ -30,9 +33,10 @@ export enum Gender {
 }
 
 @Entity('app_users')
-@Index(['socialId', 'provider'], { unique: true }) // 복합 인덱스
-@Index(['nickname'], { unique: true }) // 닉네임 유니크 인덱스
-@Index(['email']) // 이메일 인덱스
+@Index(['socialId', 'provider'], { unique: true })
+@Index(['nickname'], { unique: true })
+@Index(['email'])
+@Index(['refreshToken']) // 🆕 refreshToken 인덱스 추가
 export class AppUser {
   @PrimaryGeneratedColumn()
   @ApiProperty({ example: 1, description: '사용자 ID' })
@@ -109,15 +113,20 @@ export class AppUser {
   @ApiProperty({ example: '127.0.0.1', description: '마지막 로그인 IP' })
   lastLoginIp?: string;
 
+  // 🆕 Refresh Token 관련 필드들 추가
   @Column({ type: 'text', nullable: true })
-  @ApiProperty({ example: 'refresh_token_here', description: 'SNS 리프레시 토큰' })
+  @ApiProperty({ example: 'eyJhbGciOiJIUzI1NiIs...', description: 'JWT Refresh Token' })
   refreshToken?: string;
 
   @Column({ type: 'datetime', nullable: true })
-  @ApiProperty({ example: new Date(), description: '토큰 만료 시간' })
-  tokenExpiresAt?: Date;
+  @ApiProperty({ example: new Date(), description: 'Refresh Token 만료 시간' })
+  refreshTokenExpiresAt?: Date;
 
-  // 🆕 추가 필드들
+  @Column({ type: 'datetime', nullable: true })
+  @ApiProperty({ example: new Date(), description: 'Refresh Token 발급 시간' })
+  refreshTokenIssuedAt?: Date;
+
+  // 추가 필드들
   @Column({ type: 'varchar', length: 10, nullable: true })
   @ApiProperty({ example: 'ko', description: '선호 언어' })
   preferredLanguage?: string;

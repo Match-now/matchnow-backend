@@ -1,4 +1,7 @@
-// src/auth/strategies/jwt.strategy.ts
+// ============================================
+// 2. JWT 전략 수정 (src/auth/strategies/jwt.strategy.ts)
+// ============================================
+
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
@@ -14,6 +17,9 @@ export interface JwtPayload {
   email?: string;
   type: 'admin' | 'app';
   role?: string;
+  tokenType: 'access' | 'refresh'; // 🆕 토큰 타입 추가
+  iat?: number; // issued at
+  exp?: number; // expires at
 }
 
 @Injectable()
@@ -38,6 +44,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: JwtPayload) {
+    // 🆕 Access Token만 검증 (Refresh Token은 별도 처리)
+    if (payload.tokenType !== 'access') {
+      throw new UnauthorizedException('Invalid token type');
+    }
+
     if (payload.type === 'admin') {
       const user = await this.adminUserRepository.findOne({
         where: { id: payload.sub },
